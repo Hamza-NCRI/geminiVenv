@@ -22,7 +22,7 @@ def load_config() -> Dict[str, Any]:
         "transcribe_model": "gemini-2.0-flash",
         "analysis_model": "gemini-1.5-flash",
         "max_retries": 3,
-        "batch_size": 5  # Number of files to process concurrently
+        "batch_size": 10  # Number of files to process concurrently
     }
 
 # Logging setup with more detailed format
@@ -50,18 +50,19 @@ You are an expert Quality Assurance Analyst for a law firm's customer service te
 Analyze the following call transcript and return your response strictly in this format:
 {{
   "call_summary": "A brief, 3–4 sentence summary of the call including the reason for calling, main issues discussed, and any resolutions or next steps.",
-  "qa_evaluation": [
-    {{ "criterion": "Did the agent greet the caller warmly and professionally?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent confirm the caller's name and contact details?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent listen actively and avoid interrupting?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent ask appropriate questions to understand the issue?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent provide accurate and clear information?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent show empathy and concern for the caller's situation?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent avoid using filler words or inappropriate language?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent follow correct transfer/escalation procedures if needed?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent summarize the resolution or next steps before ending the call?", "score": "Yes/No", "justification": "..." }},
-    {{ "criterion": "Did the agent close the call politely and professionally?", "score": "Yes/No", "justification": "..." }}
-  ]
+  "qa_evaluation": 
+  [
+  {{ "criterion": "Was the call opened with a friendly and professional tone?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Did the agent ask appropriate questions to understand the issue?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Was empathy demonstrated throughout the interaction?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Did the agent maintain control and guide the call effectively?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Did the agent avoid interrupting the caller unnecessarily?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Did the agent personalize the interaction using the caller’s name?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Was important contact information (e.g., phone number) collected?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Did the agent ask how the caller heard about the service (if it was a new inquiry)?", "score": "Yes/No/NA", "justification": "Explain why and mark N/A if it was a follow-up or existing case" }},
+  {{ "criterion": "Did the agent express confidence in the service or organization?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Was the call closed with a courteous and appreciative message?", "score": "Yes/No/NA", "justification": "..." }}
+    ]
 }}
 ---
 Transcript:
@@ -79,19 +80,21 @@ async def transcribe_audio(file_path: str) -> str:
     """Upload an audio file to Gemini and return the raw transcript text."""
     logging.info(f"Starting transcription for: {file_path}")
     try:
-        with genai.upload_file(path=file_path) as audio:
-            if not audio:
-                raise RuntimeError(f"Upload failed for {file_path}")
-
-            # Ask Gemini to return only the verbatim transcript
-            response = genai.GenerativeModel(TRANSCRIBE_MODEL).generate_content([
-                "Please provide only the verbatim transcription of this call, without timestamps or metadata.",
-                audio
-            ])
-            transcript = response.text.strip()
-            word_count = len(transcript.split())
-            logging.info(f"Successfully transcribed {file_path} ({word_count} words)")
-            return transcript
+        # Open and read the file
+        with open(file_path, 'rb') as audio_file:
+            audio_data = audio_file.read()
+            
+        # Create the model and generate content
+        model = genai.GenerativeModel(TRANSCRIBE_MODEL)
+        response = model.generate_content([
+            "Please provide only the verbatim transcription of this call, without timestamps or metadata.",
+            {"mime_type": "audio/wav" if file_path.lower().endswith('.wav') else "audio/mpeg", "data": audio_data}
+        ])
+        
+        transcript = response.text.strip()
+        word_count = len(transcript.split())
+        logging.info(f"Successfully transcribed {file_path} ({word_count} words)")
+        return transcript
     except Exception as e:
         logging.error(f"Error during transcription of {file_path}: {str(e)}")
         raise
@@ -138,11 +141,11 @@ async def process_file(file_path: str) -> dict:
             "Transcription": transcript,
             "CallSummary": qa_json["call_summary"],
             "QA_Evaluation": qa_json["qa_evaluation"],
-            "Timing": {
-                "TranscriptionTime": round(transcribe_time, 2),
-                "AnalysisTime": round(analysis_time, 2),
-                "TotalTime": round(total_time, 2)
-            }
+            # "Timing": {
+            #     "TranscriptionTime": round(transcribe_time, 2),
+            #     "AnalysisTime": round(analysis_time, 2),
+            #     "TotalTime": round(total_time, 2)
+            # }
         }
         logging.info(f"Successfully processed {file_path} in {total_time:.1f}s (Transcription: {transcribe_time:.1f}s, Analysis: {analysis_time:.1f}s)")
         return result
@@ -166,43 +169,83 @@ async def process_batch(files: List[str]) -> List[Dict[str, Any]]:
 
 async def main(directory: str):
     total_start = time.time()
-    # Gather all audio files
-    audio_files = [
-        os.path.join(directory, f)
-        for f in os.listdir(directory)
-        if f.lower().endswith((".mp3", ".wav"))
-    ]
-    logging.info(f"Found {len(audio_files)} audio files in {directory}")
     
-    # Process in batches
-    batch_size = config["batch_size"]
-    results = []
-    for i in range(0, len(audio_files), batch_size):
-        batch = audio_files[i:i + batch_size]
-        logging.info(f"Processing batch {i//batch_size + 1} of {(len(audio_files) + batch_size - 1)//batch_size}")
-        batch_results = await process_batch(batch)
-        results.extend(batch_results)
-
-    # Calculate total processing time
+    # Get all subdirectories that contain audio files
+    subdirs = []
+    for root, dirs, files in os.walk(directory):
+        if any(f.lower().endswith((".mp3", ".wav")) for f in files):
+            subdirs.append(root)
+    
+    if not subdirs:
+        logging.error(f"No audio files found in directory or its subdirectories: {directory}")
+        return
+    
+    # Group subdirectories by their parent folder
+    parent_folders = {}
+    for subdir in subdirs:
+        parent_folder = os.path.basename(os.path.dirname(subdir))
+        if parent_folder not in parent_folders:
+            parent_folders[parent_folder] = []
+        parent_folders[parent_folder].append(subdir)
+    
+    # Process each parent folder
+    for parent_folder, folder_subdirs in parent_folders.items():
+        all_results = []
+        total_files = 0
+        
+        # Process each subdirectory under this parent folder
+        for subdir in folder_subdirs:
+            # Gather audio files for this subdirectory
+            audio_files = [
+                os.path.join(subdir, f)
+                for f in os.listdir(subdir)
+                if f.lower().endswith((".mp3", ".wav"))
+            ]
+            
+            if not audio_files:
+                continue
+                
+            total_files += len(audio_files)
+            logging.info(f"Found {len(audio_files)} audio files in {subdir}")
+            
+            # Process in batches
+            batch_size = config["batch_size"]
+            for i in range(0, len(audio_files), batch_size):
+                batch = audio_files[i:i + batch_size]
+                logging.info(f"Processing batch {i//batch_size + 1} of {(len(audio_files) + batch_size - 1)//batch_size}")
+                batch_results = await process_batch(batch)
+                all_results.extend(batch_results)
+        
+        if not all_results:
+            continue
+            
+        # Calculate processing time for this parent folder
+        total_time = time.time() - total_start
+        
+        # Add summary statistics
+        summary = {
+            "TotalFiles": total_files,
+            "SuccessfulFiles": sum(1 for r in all_results if r["Success"]),
+            "FailedFiles": sum(1 for r in all_results if not r["Success"]),
+            # "TotalProcessingTime": round(total_time, 2),
+            # "AverageTimePerFile": round(total_time / total_files, 2) if total_files else 0,
+            "Results": all_results
+        }
+        
+        # Save JSON for this parent folder
+        output_path = f"output/{parent_folder}.json"
+        os.makedirs("output", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as fout:
+            json.dump(summary, fout, indent=2, ensure_ascii=False)
+        logging.info(f"Results for {parent_folder} saved to {output_path}")
+        
+        if total_files:
+            logging.info(f"Processed {total_files} files for {parent_folder} in {total_time:.1f}s (avg {total_time/total_files:.1f}s per file)")
+    
+    # Log final summary
     total_time = time.time() - total_start
-    
-    # Add summary statistics
-    summary = {
-        "TotalFiles": len(audio_files),
-        "SuccessfulFiles": sum(1 for r in results if r["Success"]),
-        "FailedFiles": sum(1 for r in results if not r["Success"]),
-        "TotalProcessingTime": round(total_time, 2),
-        "AverageTimePerFile": round(total_time / len(audio_files), 2) if audio_files else 0,
-        "Results": results
-    }
-
-    # Save a master JSON with proper Unicode handling
-    output_path = "output/all_calls.json"
-    os.makedirs("output", exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as fout:
-        json.dump(summary, fout, indent=2, ensure_ascii=False)
-    logging.info(f"All results saved to {output_path}")
-    logging.info(f"Total processing time: {total_time:.1f}s for {len(audio_files)} files (avg {total_time/len(audio_files):.1f}s per file)")
+    logging.info(f"Total processing completed in {total_time:.1f}s")
+    logging.info(f"Processed files across {len(parent_folders)} parent folders")
 
 if __name__ == "__main__":
     asyncio.run(main(directory="test-transcription"))
