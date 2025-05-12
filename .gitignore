@@ -1,0 +1,70 @@
+# Python virtual environment
+venv/
+env/
+ENV/
+.env
+.venv
+geminiVenv/
+Scripts/
+Include/
+Lib/
+pyvenv.cfg
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Logs and databases
+*.log
+*.sqlite3
+processing.log
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Project specific directories
+output/
+test/
+test-transcription/
+ToAddLater/
+config/
+
+# Audio files
+*.wav
+*.mp3
+
+# Config files with sensitive data
+config.ini
+
+# Archive files
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.bz2
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Backup files
+*~
+*.bak
+*.backup
+*_backup
