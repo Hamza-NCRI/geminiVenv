@@ -49,7 +49,7 @@ QA_PROMPT_TEMPLATE = """
 You are an expert Quality Assurance Analyst for a law firm's customer service team.
 Analyze the following call transcript and return your response strictly in this format:
 {{
-  "call_summary": "A brief, 3–4 sentence summary of the call including the reason for calling, main issues discussed, and any resolutions or next steps.",
+  "call_summary": "A brief, 3–4 sentence summary of the call including the reason for calling, main issues discussed, and any resolutions or next steps. It should also include the agent's name and the caller's name.",
   "qa_evaluation": 
   [
   {{ "criterion": "Was the call opened with a friendly and professional tone?", "score": "Yes/No/NA", "justification": "..." }},
@@ -57,7 +57,7 @@ Analyze the following call transcript and return your response strictly in this 
   {{ "criterion": "Was empathy demonstrated throughout the interaction?", "score": "Yes/No/NA", "justification": "..." }},
   {{ "criterion": "Did the agent maintain control and guide the call effectively?", "score": "Yes/No/NA", "justification": "..." }},
   {{ "criterion": "Did the agent avoid interrupting the caller unnecessarily?", "score": "Yes/No/NA", "justification": "..." }},
-  {{ "criterion": "Did the agent personalize the interaction using the caller’s name?", "score": "Yes/No/NA", "justification": "..." }},
+  {{ "criterion": "Did the agent personalize the interaction using the caller's name?", "score": "Yes/No/NA", "justification": "..." }},
   {{ "criterion": "Was important contact information (e.g., phone number) collected?", "score": "Yes/No/NA", "justification": "..." }},
   {{ "criterion": "Did the agent ask how the caller heard about the service (if it was a new inquiry)?", "score": "Yes/No/NA", "justification": "Explain why and mark N/A if it was a follow-up or existing case" }},
   {{ "criterion": "Did the agent express confidence in the service or organization?", "score": "Yes/No/NA", "justification": "..." }},
@@ -180,46 +180,36 @@ async def main(directory: str):
         logging.error(f"No audio files found in directory or its subdirectories: {directory}")
         return
     
-    # Group subdirectories by their parent folder
-    parent_folders = {}
+    # Process each subdirectory
     for subdir in subdirs:
-        parent_folder = os.path.basename(os.path.dirname(subdir))
-        if parent_folder not in parent_folders:
-            parent_folders[parent_folder] = []
-        parent_folders[parent_folder].append(subdir)
-    
-    # Process each parent folder
-    for parent_folder, folder_subdirs in parent_folders.items():
         all_results = []
         total_files = 0
         
-        # Process each subdirectory under this parent folder
-        for subdir in folder_subdirs:
-            # Gather audio files for this subdirectory
-            audio_files = [
-                os.path.join(subdir, f)
-                for f in os.listdir(subdir)
-                if f.lower().endswith((".mp3", ".wav"))
-            ]
-            
-            if not audio_files:
-                continue
-                
-            total_files += len(audio_files)
-            logging.info(f"Found {len(audio_files)} audio files in {subdir}")
-            
-            # Process in batches
-            batch_size = config["batch_size"]
-            for i in range(0, len(audio_files), batch_size):
-                batch = audio_files[i:i + batch_size]
-                logging.info(f"Processing batch {i//batch_size + 1} of {(len(audio_files) + batch_size - 1)//batch_size}")
-                batch_results = await process_batch(batch)
-                all_results.extend(batch_results)
+        # Gather audio files for this subdirectory
+        audio_files = [
+            os.path.join(subdir, f)
+            for f in os.listdir(subdir)
+            if f.lower().endswith((".mp3", ".wav"))
+        ]
         
+        if not audio_files:
+            continue
+            
+        total_files += len(audio_files)
+        logging.info(f"Found {len(audio_files)} audio files in {subdir}")
+        
+        # Process in batches
+        batch_size = config["batch_size"]
+        for i in range(0, len(audio_files), batch_size):
+            batch = audio_files[i:i + batch_size]
+            logging.info(f"Processing batch {i//batch_size + 1} of {(len(audio_files) + batch_size - 1)//batch_size}")
+            batch_results = await process_batch(batch)
+            all_results.extend(batch_results)
+    
         if not all_results:
             continue
             
-        # Calculate processing time for this parent folder
+        # Calculate processing time for this subdirectory
         total_time = time.time() - total_start
         
         # Add summary statistics
@@ -232,20 +222,21 @@ async def main(directory: str):
             "Results": all_results
         }
         
-        # Save JSON for this parent folder
-        output_path = f"output/{parent_folder}.json"
+        # Save JSON using the subdirectory name
+        subdir_name = os.path.basename(subdir)
+        output_path = f"output/{subdir_name}.json"
         os.makedirs("output", exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as fout:
             json.dump(summary, fout, indent=2, ensure_ascii=False)
-        logging.info(f"Results for {parent_folder} saved to {output_path}")
+        logging.info(f"Results for {subdir_name} saved to {output_path}")
         
         if total_files:
-            logging.info(f"Processed {total_files} files for {parent_folder} in {total_time:.1f}s (avg {total_time/total_files:.1f}s per file)")
+            logging.info(f"Processed {total_files} files for {subdir_name} in {total_time:.1f}s (avg {total_time/total_files:.1f}s per file)")
     
     # Log final summary
     total_time = time.time() - total_start
     logging.info(f"Total processing completed in {total_time:.1f}s")
-    logging.info(f"Processed files across {len(parent_folders)} parent folders")
+    logging.info(f"Processed files across {len(subdirs)} subdirectories")
 
 if __name__ == "__main__":
     asyncio.run(main(directory="test-transcription"))
