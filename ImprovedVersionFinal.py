@@ -119,36 +119,24 @@ async def analyze_transcript(transcript: str) -> dict:
         raise
 
 async def process_file(file_path: str) -> dict:
-    """Full pipeline: transcribe, analyze, collate results."""
     start = time.time()
     logging.info(f"Starting processing pipeline for: {file_path}")
     try:
-        # Time transcription
-        transcribe_start = time.time()
         transcript = await transcribe_audio(file_path)
-        transcribe_time = time.time() - transcribe_start
-        
-        # Time analysis
-        analysis_start = time.time()
+        await asyncio.sleep(2)  # 🕒 Throttle after transcription
+
         qa_json = await analyze_transcript(transcript)
-        analysis_time = time.time() - analysis_start
-        
+        await asyncio.sleep(2)  # 🕒 Throttle after analysis
+
         total_time = time.time() - start
-        result = {
+        return {
             "FileName": os.path.basename(file_path),
             "FilePath": file_path,
             "Success": True,
             "Transcription": transcript,
             "CallSummary": qa_json["call_summary"],
             "QA_Evaluation": qa_json["qa_evaluation"],
-            # "Timing": {
-            #     "TranscriptionTime": round(transcribe_time, 2),
-            #     "AnalysisTime": round(analysis_time, 2),
-            #     "TotalTime": round(total_time, 2)
-            # }
         }
-        logging.info(f"Successfully processed {file_path} in {total_time:.1f}s (Transcription: {transcribe_time:.1f}s, Analysis: {analysis_time:.1f}s)")
-        return result
     except Exception as e:
         elapsed = time.time() - start
         logging.exception(f"Error processing {file_path} after {elapsed:.1f}s")
@@ -162,10 +150,75 @@ async def process_file(file_path: str) -> dict:
             }
         }
 
+# async def process_file(file_path: str) -> dict:
+#     """Full pipeline: transcribe, analyze, collate results."""
+#     start = time.time()
+#     logging.info(f"Starting processing pipeline for: {file_path}")
+#     try:
+#         # Time transcription
+#         transcribe_start = time.time()
+#         transcript = await transcribe_audio(file_path)
+#         transcribe_time = time.time() - transcribe_start
+        
+#         # Time analysis
+#         analysis_start = time.time()
+#         qa_json = await analyze_transcript(transcript)
+#         analysis_time = time.time() - analysis_start
+        
+#         total_time = time.time() - start
+#         result = {
+#             "FileName": os.path.basename(file_path),
+#             "FilePath": file_path,
+#             "Success": True,
+#             "Transcription": transcript,
+#             "CallSummary": qa_json["call_summary"],
+#             "QA_Evaluation": qa_json["qa_evaluation"],
+#             # "Timing": {
+#             #     "TranscriptionTime": round(transcribe_time, 2),
+#             #     "AnalysisTime": round(analysis_time, 2),
+#             #     "TotalTime": round(total_time, 2)
+#             # }
+#         }
+#         logging.info(f"Successfully processed {file_path} in {total_time:.1f}s (Transcription: {transcribe_time:.1f}s, Analysis: {analysis_time:.1f}s)")
+#         return result
+#     except Exception as e:
+#         elapsed = time.time() - start
+#         logging.exception(f"Error processing {file_path} after {elapsed:.1f}s")
+#         return {
+#             "FileName": os.path.basename(file_path),
+#             "FilePath": file_path,
+#             "Success": False,
+#             "Error": str(e),
+#             "Timing": {
+#                 "TotalTime": round(elapsed, 2)
+#             }
+#         }
+
 async def process_batch(files: List[str]) -> List[Dict[str, Any]]:
-    """Process a batch of files concurrently."""
-    tasks = [process_file(p) for p in files]
-    return await asyncio.gather(*tasks)
+    results = []
+    for file in files:
+        result = await process_file(file)
+        results.append(result)
+        await asyncio.sleep(2)  # 🕒 Space between file-level operations
+    return results
+
+# async def process_batch(files: List[str]) -> List[Dict[str, Any]]:
+#     """Process a batch of files concurrently."""
+#     results = []
+#     for file in files:
+#         result = await process_file(file)
+#         results.append(result)
+#         await asyncio.sleep(1.5)  # Prevent quota hit
+#     return results
+    
+    # tasks = [process_file(p) for p in files]
+    # results = []
+    # for task in tasks:
+    #     result = await task
+    #     results.append(result)
+    #     await asyncio.sleep(1.5)  # delay between each file to avoid 429
+    # return results
+    #return await asyncio.gather(*tasks)
 
 async def main(directory: str):
     total_start = time.time()
@@ -204,8 +257,11 @@ async def main(directory: str):
             batch = audio_files[i:i + batch_size]
             logging.info(f"Processing batch {i//batch_size + 1} of {(len(audio_files) + batch_size - 1)//batch_size}")
             batch_results = await process_batch(batch)
+            # await asyncio.sleep(10)  # Prevent quota hit
             all_results.extend(batch_results)
-    
+            
+            # 🛡 Optional cooldown between batches
+            await asyncio.sleep(10)
         if not all_results:
             continue
             
@@ -239,4 +295,4 @@ async def main(directory: str):
     logging.info(f"Processed files across {len(subdirs)} subdirectories")
 
 if __name__ == "__main__":
-    asyncio.run(main(directory="test-transcription"))
+    asyncio.run(main(directory="AudioFiles"))
