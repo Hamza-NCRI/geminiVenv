@@ -9,7 +9,8 @@ import sys
 from typing import List, Dict, Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ─── Configuration ───────────────────────────────────────────────────────────────
 
@@ -37,12 +38,12 @@ logging.basicConfig(
 
 # Load configuration
 config = load_config()
-genai.configure(api_key=config["api_key"])
+# Create a single client for the new SDK
+client = genai.Client(api_key=config["api_key"])
 
 # Initialize the Gemini models
 TRANSCRIBE_MODEL = config["transcribe_model"]
 ANALYSIS_MODEL = config["analysis_model"]
-ANALYSIS_CONFIG = {"response_mime_type": "application/json"}
 
 # Your JSON-schema prompt (we'll append the transcript at runtime)
 QA_PROMPT_TEMPLATE = """
@@ -83,15 +84,18 @@ async def transcribe_audio(file_path: str) -> str:
         # Open and read the file
         with open(file_path, 'rb') as audio_file:
             audio_data = audio_file.read()
-            
-        # Create the model and generate content
-        model = genai.GenerativeModel(TRANSCRIBE_MODEL)
-        response = model.generate_content([
-            "Please provide only the verbatim transcription of this call, without timestamps or metadata.",
-            {"mime_type": "audio/wav" if file_path.lower().endswith('.wav') else "audio/mpeg", "data": audio_data}
-        ])
-        
-        transcript = response.text.strip()
+        # Use the new SDK async client for transcription
+        response = await client.aio.models.generate_content(
+            model=TRANSCRIBE_MODEL,
+            contents=[
+                "Please provide only the verbatim transcription of this call, without timestamps or metadata.",
+                types.Part.from_bytes(
+                    data=audio_data,
+                    mime_type="audio/wav" if file_path.lower().endswith('.wav') else "audio/mpeg"
+                )
+            ]
+        )
+        transcript = (response.text or "").strip()
         word_count = len(transcript.split())
         logging.info(f"Successfully transcribed {file_path} ({word_count} words)")
         return transcript
@@ -109,9 +113,14 @@ async def analyze_transcript(transcript: str) -> dict:
     logging.info("Starting transcript analysis")
     try:
         prompt = QA_PROMPT_TEMPLATE.format(transcript=transcript)
-        model = genai.GenerativeModel(ANALYSIS_MODEL, generation_config=ANALYSIS_CONFIG)
-        response = model.generate_content([prompt])
-        result = json.loads(response.text)
+        response = await client.aio.models.generate_content(
+            model=ANALYSIS_MODEL,
+            contents=[prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        if not response.text:
+            raise ValueError("No response text from analysis model")
+        result = json.loads(response.text or "{}")
         logging.info("Successfully analyzed transcript")
         return result
     except Exception as e:
